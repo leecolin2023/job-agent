@@ -9,7 +9,6 @@ on:
       - "config/**"
       - "tests/**"
       - ".github/workflows/phase0-offline.yml"
-      - ".github/workflows/phase0-offline.yml"
   pull_request:
     paths:
       - "src/**"
@@ -17,7 +16,6 @@ on:
       - "docker/**"
       - "config/**"
       - "tests/**"
-      - ".github/workflows/phase0-offline.yml"
       - ".github/workflows/phase0-offline.yml"
   workflow_dispatch:
 
