@@ -1,61 +1,41 @@
-# job-agent
+# job-agent · JD Research Agent
 
-面向真实招聘岗位数据的 Agent 实验工程。首个案例采用 **DeepSeek Harness Python SDK**，从一个可观察、可隔离的 Agent 执行开始，逐步接入 job-rag 的岗位数据、工具、验证和评测。
+本仓库定位为**面向招聘岗位数据的业务 Agent 工程**，目标是让 Agent 使用真实岗位库执行检索、比较、统计和生成附证据的研究报告，而不是只输出缺乏依据的答案。
 
-**职责分工**：本仓库维护运行代码、部署配置、测试，以及**与本仓库源码同步更新的逐行代码解读**；通用机制、学习路线及 Agent Runtime 原理文章统一维护在 [HarnessLab / agent-runtime](https://github.com/leecolin2023/HarnessLab/tree/main/agent-runtime)。
+## 与 HarnessLab 的分工
 
-## 阶段 0：隔离运行 SDK 与观察 Session
+**通用 SDK / Agent Runtime 实验已经移走**。原 `src/run_phase0.py` 的功能只是验证 DeepSeek Harness SDK、Bash 工具与 Session 日志，未涉及岗位检索，所以它及其运行依赖统一迁入：
 
-**代码阅读**：[01｜项目架构、源码调用链与逐行解读](./docs/01-project-architecture-and-code.md)。建议先读这篇，再对照下方文件逐行查看。
+- [HarnessLab · SDK Minimal Phase 0 可运行实验](https://github.com/leecolin2023/HarnessLab/tree/main/agent-runtime/labs/sdk-minimal-phase0)
+- [Phase 0 项目架构与逐行代码解读](https://github.com/leecolin2023/HarnessLab/blob/main/agent-runtime/labs/sdk-minimal-phase0/01-code-walkthrough.md)
+- [Agent Loop 运行原理](https://github.com/leecolin2023/HarnessLab/blob/main/agent-runtime/01-agent-loop-execution-mechanism.md)
 
-**通用原理**：[HarnessLab｜为什么需要 Agent 与 Agent Runtime？](https://github.com/leecolin2023/HarnessLab/blob/main/agent-runtime/README.md)。
+**本仓库只维护 JD Research Agent 的业务实现。** 此次清理后，原来的 `bash scripts/run-docker.sh run` 不再是本仓库的命令；请在 HarnessLab 对应实验目录运行它。
 
-代码入口：
+## 本项目希望解决什么问题？
 
-| 文件 | 说明 |
+以一组经过授权、固定版本的完整 JD 为例，用户提出：
+
+> 统计岗位职责或任职要求涉及 RAG 的职位中，各项技术要求的出现情况，并区分必备条件与优先条件。
+
+合格结果不能只是一段模型自行概括的总结，至少要能回答：统计的样本范围是什么、按什么字段判断 RAG 相关、如何去重、某项技能出现了多少次、每一项统计能追溯到哪些职位 ID 与原文。
+
+## 下一步业务架构（规划，尚未实现）
+
+| 模块 | 计划职责 |
 | --- | --- |
-| `docker/Dockerfile` | Python 3.12 与 DeepSeek Harness Python SDK |
-| `scripts/run-docker.sh` | Docker 环境检查、构建、真实执行与 Session 统计 |
-| `src/run_phase0.py` | SDK 最小执行、记录运行元数据 |
-| `src/session_report.py` | 只展示 JSONL 事件类型及数量，不打印正文 |
-| `config/disable-session-upload.patch.yml` | 关闭向官方模型 API 附加 Session 事件的可选机制 |
-| `tests/test_phase0.py` | 不依赖真实 SDK/模型 Key 的离线测试 |
-| `.github/workflows/phase0-offline.yml` | 代码静态与离线 CI 校验 |
+| `job-rag` 数据访问适配器 | 按职位 ID 读取固定快照中的完整 JD |
+| 检索工具 | 根据职位文本、职责和任职要求召回相关岗位，按职位 ID 去重 |
+| JD 语义判断 | 判断职位是否真实涉及 RAG，区分主责、必备和加分项 |
+| 证据与报告 | 生成统计分母、来源职位 ID、可回查原文与研究报告 |
+| 任务验证与评测 | 检查覆盖范围、去重结果、引用正确性及统计口径 |
 
-### Linux Docker 快速开始
+上述只是目标拆分，不代表已存在这些源码、CLI 或模型服务。
 
-```bash
-git clone https://github.com/leecolin2023/job-agent.git
-cd job-agent
+## 当前状态
 
-bash scripts/run-docker.sh check
-bash scripts/run-docker.sh test
-bash scripts/run-docker.sh build
+- **已完成的历史实验**：Phase 0 的 SDK 最小调用及离线测试，现归档到 HarnessLab 继续维护。
+- **本仓库业务实现**：尚未接入 JD 查询工具、业务 Agent 执行入口或报告校验。
+- **文档入口**：见 [docs/01-project-architecture-and-code.md](./docs/01-project-architecture-and-code.md) 的历史文档迁移说明。
 
-read -rs -p 'DeepSeek test API Key: ' DEEPSEEK_API_KEY
-echo
-export DEEPSEEK_API_KEY
-
-# 根据实际 API 端点设置模型，可选：
-# export DSH_MODEL=deepseek-v4-flash
-# export DEEPSEEK_BASE_URL=https://your-compatible-endpoint/v1
-
-bash scripts/run-docker.sh run
-bash scripts/run-docker.sh inspect
-```
-
-**运行状态**：截至迁移时，原先的 HarnessLab 离线 CI 已通过；真实 Docker / DeepSeek API / Session 日志测试**尚未执行**。后续以此仓库自己的 CI、真实运行记录为准。
-
-### 安全边界
-
-- 使用有用量上限、可撤销的专用测试 API Key。请勿将凭据或真实银行数据写入仓库。
-- DSH `sdk-minimal` 默认 `danger-full-access`；仅指定 `cwd` **不是沙箱**。本项目使用独立容器、只读根文件系统、收紧进程权限、独立挂载工作区和日志 Home。
-- Docker 默认 bridge 网络仍可能访问其他地址；有严格出站要求时应在宿主防火墙或模型网关限制。
-- Key 作为环境变量进入容器，Agent Shell 理论上也能读取它；生产方案应采用容器外模型网关。
-- `.local/`、密钥和原始 Session 日志不可提交公开仓库。
-
-## 后续计划
-
-先完成阶段 0 的实际 Docker 运行，再使用固定、脱敏完整 JD 形成首个可回查的 `report.md`；其后按 [HarnessLab 完整学习路线](https://github.com/leecolin2023/HarnessLab/blob/main/agent-runtime/LEARNING_PATH.md) 逐步演进工具调用、Workflow、MCP、Context、State、恢复与评测。
-
-本仓库独立承担工程实现，不再在 HarnessLab 里维护重复代码。
+原则：需要解释某项 Agent Runtime 原理时在 HarnessLab 中做可复现实验；需要实现实际招聘岗位研究任务时才在本仓库编写业务代码。
