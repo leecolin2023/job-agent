@@ -2,11 +2,13 @@
 
 面向真实招聘岗位数据的 Agent 实验工程。首个案例采用 **DeepSeek Harness Python SDK**，从一个可观察、可隔离的 Agent 执行开始，逐步接入 job-rag 的岗位数据、工具、验证和评测。
 
-**职责分工**：本仓库只维护运行代码、部署配置、测试和运行说明；通用机制、学习路线及实验原理文档统一维护在 [HarnessLab / agent-runtime](https://github.com/leecolin2023/HarnessLab/tree/main/agent-runtime)。
+**职责分工**：本仓库维护运行代码、部署配置、测试，以及**与本仓库源码同步更新的逐行代码解读**；通用机制、学习路线及 Agent Runtime 原理文章统一维护在 [HarnessLab / agent-runtime](https://github.com/leecolin2023/HarnessLab/tree/main/agent-runtime)。
 
 ## 阶段 0：隔离运行 SDK 与观察 Session
 
-参照 [HarnessLab｜job-agent 整体架构与核心代码解读](https://github.com/leecolin2023/HarnessLab/blob/main/agent-runtime/job-agent/01-project-architecture-and-code.md)。
+**代码阅读**：[01｜项目架构、源码调用链与逐行解读](./docs/01-project-architecture-and-code.md)。建议先读这篇，再对照下方文件逐行查看。
+
+**通用原理**：[HarnessLab｜为什么需要 Agent 与 Agent Runtime？](https://github.com/leecolin2023/HarnessLab/blob/main/agent-runtime/README.md)。
 
 代码入口：
 
