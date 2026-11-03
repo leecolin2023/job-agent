@@ -6,7 +6,7 @@
 
 ## 阶段 0：隔离运行 SDK 与观察 Session
 
-参照 [HarnessLab｜阶段 0 中文教程](https://github.com/leecolin2023/HarnessLab/blob/main/agent-runtime/00-deepseek-harness-sdk-learning.md)。
+参照 [HarnessLab｜job-agent 整体架构与核心代码解读](https://github.com/leecolin2023/HarnessLab/blob/main/agent-runtime/job-agent/01-project-architecture-and-code.md)。
 
 代码入口：
 
