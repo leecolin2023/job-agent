@@ -910,6 +910,167 @@ Docker 支持 `DSH_SDK_VERSION`，但默认没有锁版本；模型通过端点�
 
 ---
 
+## 十四、核心代码逐行阅读：从 Python 入口到 Session
+
+本节只解释 **job-agent 的实际源码**；行号对应文首的固定提交。按“行号—输入—动作—结果”阅读，避免把 DeepSeek Harness 自带的 Runtime 机制误当成当前项目自己写的代码。
+
+### 14.1 `src/run_phase0.py`：程序从哪开始？
+
+[查看带行号源码](https://github.com/leecolin2023/job-agent/blob/70326a48b85ef813642f8e5298f44465fa98166e/src/run_phase0.py)
+
+| 行号 | 代码含义 |
+| --- | --- |
+| 1–4 | 顶部文档字符串说明用途，并提醒 `sdk-minimal` 中的 `cwd` 只是工作目录，不是沙箱 |
+| 5 | `from __future__ import annotations`：推迟处理类型注解 |
+| 6 | `argparse`：读取命令行参数 |
+| 7 | `Counter`：计数不同类型的事件 |
+| 8 | `datetime, timezone`：记录 UTC 时间与持续时间 |
+| 9 | `metadata`：读取实际安装的 SDK 版本 |
+| 10–13 | `json` 保存摘要；`os` 读环境变量；`Path` 处理路径；`sys` 返回退出码 |
+| 15–20 | `DEFAULT_PROMPT`：指示模型尝试用 Bash 执行 `pwd` 和 `ls -la .`；不访问网络等要求只是文字指令 |
+| 23–24 | `event_kind(event)`：只提取事件标签，不返回事件正文 |
+| 25–28 | 如果事件是字典，按 `kind`、`type`、`event_type` 顺序寻找字符串标签 |
+| 29–31 | 如果事件包在 `event` 字典内，就递归查询内部 |
+| 32–36 | 如果不是字典，尝试从对象属性读取相同标签 |
+| 37 | 实在找不到标签，则用 Python 类型名称兜底 |
+| 40 | `main(argv: list[str] | None = None) -> int`：允许命令行和单元测试调用；返回整数退出码 |
+| 41 | `argparse.ArgumentParser(description=__doc__)`：创建参数解析器，文档字符串作为说明 |
+| 42 | `--workspace`：必填，转换为 `Path`；SDK 的工作目录 |
+| 43 | `--dsh-home`：必填，转换为 `Path`；Runtime 保存状态与 Session 的 Home |
+| 44 | `--patch`：必填，配置补丁文件 |
+| 45 | `--output`：必填，摘要 JSON 目标文件 |
+| 46 | `--session-id`：必填，具体 Session 标识 |
+| 47 | `--model`：优先环境变量 `DSH_MODEL`，否则采用默认 ID |
+| 48 | `--prompt`：不指定则使用固定的目录检查任务 |
+| 49 | `parse_args(argv)`：将输入转成 `args.model`、`args.workspace` 等属性 |
+| 51–53 | API Key 缺失就提前退出，**尚未导入或调用 SDK** |
+| 54–56 | 用 `resolve(strict=True)` 确定路径真实存在并转为规范绝对路径 |
+| 57–59 | 确认 workspace/home 是目录、patch 是文件 |
+| 60–62 | 禁止 workspace 与 Home 重合或互相包含；这是路径组织检查，不是权限隔离 |
+
+### 14.2 第 64–76 行：`with DeepSeekHarness(...) as harness` 逐行解释
+
+```python
+from deepseek_harness import DeepSeekHarness
+started = datetime.now(timezone.utc)
+with DeepSeekHarness(
+    provider="deepseek-official",
+    model=args.model,
+    max_tokens=4096,
+    cwd=str(workspace),
+    dsh_home=str(home),
+    profile="sdk-minimal",
+    patches=(str(patch),),
+) as harness:
+    result = harness.run(args.prompt, session_id=args.session_id)
+finished = datetime.now(timezone.utc)
+```
+
+| 行号 | 解读 |
+| --- | --- |
+| **64** | 从第三方 `deepseek_harness` 包导入 SDK 入口类 |
+| **65** | 记录运行起点；用于之后统计总耗时 |
+| **66** | 创建 `DeepSeekHarness` 并进入 Python 上下文管理器；SDK 可能采用延迟启动，创建对象不等于模型已执行 |
+| **67** | `provider`：指定 DSH 注册的 `deepseek-official` 模型适配器，不是 API URL |
+| **68** | `model=args.model`：由命令行/环境变量决定实际模型 ID |
+| **69** | `max_tokens=4096`：单次模型请求的输出上限，不是整项 Agent 任务的 Token 总额度 |
+| **70** | `cwd=str(workspace)`：设置工作目录，`str` 把 Path 对象转成字符串；**cwd 不等于沙箱** |
+| **71** | `dsh_home=str(home)`：指定 Runtime 的独立数据目录，存放 Profile、Sessions 等 |
+| **72** | `profile="sdk-minimal"`：选用提供基本 Agent Loop、Bash、Session JSONL 的轻量运行组件组合 |
+| **73** | `patches=(str(patch),)`：传一个补丁路径组成的**单元素元组**；逗号使其成为元组 |
+| **74** | `) as harness:`：把进入上下文后的 SDK 对象命名为 `harness`，离开 `with` 时清理所管理的资源 |
+| **75** | `harness.run(args.prompt, session_id=args.session_id)`：提交用户任务和会话标识，等待返回 `RunResult` |
+| **76** | 记录完成时间；此时已经离开 `with`，所以耗时包含进入和退出过程 |
+
+**`with` 是 Python 的资源管理语法。** 可以近似理解为先创建客户端、运行任务，最后通过 `try/finally` 调用 `close()`。它不是 Agent Loop。当前 Python 文件没有自己编写模型调用与工具执行的循环：那些行为由 DSH Runtime 组织。真正是否执行了 Bash，需要回查原生 Session 事件。
+
+### 14.3 第 78–112 行：`RunResult` 返回后代码干了什么？
+
+| 行号 | 代码及作用 |
+| --- | --- |
+| 78 | `Counter(event_kind(e) for e in result.events)`：统计根事件标签，**不是模型调用次数** |
+| 79–82 | 构造 `record`，记录观察时间、总耗时、实际返回的 Session ID |
+| 83–85 | 记录本次配置的 provider、model、profile |
+| 86 | `metadata.version("deepseek-harness-sdk")`：查询实际安装版本 |
+| 87 | `result.finish_reason`：记录结束原因，不能证明任务结果正确 |
+| 88–89 | `len(result.events)` 和 `len(result.notifications)`：统计根事件数和通知数 |
+| 90 | `dict(sorted(kinds.items()))`：保存按类型排序的统计 |
+| 91 | `len(result.final_response or "")`：记录最终文本的字符长度，而不是内容 |
+| 92 | 保存 Session JSONL 的预期目录 |
+| 93 | 保存 `session_log_upload_disabled_by_patch=True`：表示传入了补丁，**不是网络层已验证的证据** |
+| 94–95 | 写入“摘要不能证明工具执行”的提示，结束字典 |
+| 96–97 | `mkdir` 创建输出目录，再以 UTF-8 JSON 格式写入摘要文件 |
+| 98–101 | 打印 Session ID、结束原因、事件数量与元数据路径 |
+| 102–104 | 在两个标记之间打印最终回答正文；可能包含用户内容，不能当作无敏感信息的日志 |
+| 105–108 | 只有结束原因既不是 `None` 也不是 `completed` 才退出码 `1`；返回 `0` 不代表两个 Bash 命令实际成功 |
+| 111–112 | 脚本直连运行时才调用 `main()` 并将其返回值作为进程退出码 |
+
+### 14.4 `scripts/run-docker.sh`：Shell 的关键行号
+
+[查看带行号源码](https://github.com/leecolin2023/job-agent/blob/70326a48b85ef813642f8e5298f44465fa98166e/scripts/run-docker.sh)
+
+| 行号 | 含义 |
+| --- | --- |
+| 1–3 | 使用 Bash 运行，开启 `-euo pipefail` 严格错误处理 |
+| 5 | 根据 `BASH_SOURCE[0]` 定位仓库根目录 `LAB` |
+| 6–8 | `STATE` 是 DSH Home，`WORKSPACE` 是工具工作区，`RESULTS` 存元数据摘要 |
+| 9–10 | 设置可覆盖的镜像标签，读取第一个命令参数 |
+| 12–17 | `die` 报错、`need_docker` 检查 Docker、`prepare` 创建目录 |
+| 18–23 | `build` 触发 Docker 镜像构建，传入可选 SDK 版本 |
+| 24–39 | `check` 打印环境状态，不调用模型 |
+| 40–43 | `run` 检查 Docker、Key 并准备三个目录 |
+| 44 | 用 UTC 时间戳加 Shell PID 生成本次 Session ID |
+| 45–46 | 选 Docker 网络名并检查名称格式；默认 bridge 允许出站，**并非网络白名单** |
+| 47–50 | 创建 Docker 参数数组：只读根文件系统、低权限、进程数/内存/CPU 限制 |
+| 51–53 | 指定容器的 UID/GID、网络、临时目录挂载 |
+| 54–55 | 向容器传入 API Key 与 DSH Home；容器内 Bash 理论上也能看到环境变量 |
+| 56–59 | 分别挂载只读源代码、可写 State、Workspace 和 Results |
+| 60–61 | 结束参数数组；可选透传模型服务 URL |
+| 62–68 | 执行 Docker 命令，运行 `src/run_phase0.py`，传入路径、Session ID、模型 |
+| 69–70 | 提示如何运行 `inspect`，结束 run 分支 |
+| 71–75 | `inspect` 使用宿主 Python 执行 `session_report.py` |
+| 76–79 | `test` 用 `unittest` 执行离线测试，完全不需要 Docker/Key |
+| 80–92 | 打印使用帮助，结束 `case` 分支 |
+
+Shell 中 `case "$ACTION"` 的分支是确定性程序，不是 Agent 自主规划；真正的模型决策需要看 DSH Runtime。
+
+### 14.5 `src/session_report.py`：为什么它不是 Agent Loop 的一部分？
+
+[查看带行号源码](https://github.com/leecolin2023/job-agent/blob/70326a48b85ef813642f8e5298f44465fa98166e/src/session_report.py)
+
+| 行号 | 执行内容 |
+| --- | --- |
+| 1–9 | 文件说明、导入模块，设置单文件 32 MiB 读取上限 |
+| 12–14 | `classify()`：非字典返回 `unknown` |
+| 15–18 | 顺序提取 `kind`、`type` 或 `event_type` |
+| 19–20 | 如有嵌套字典 `event`，递归查找事件标签 |
+| 23–27 | `summarize(home)`：确认 `home/sessions` 存在并递归查找全部 JSONL |
+| 28–30 | 初始化每文件与总计数器 |
+| 31–37 | 读取文件大小；超过 32 MiB 则标记跳过 |
+| 38–43 | 逐行读取并跳过空行 |
+| 44–49 | `json.loads` 解析；错误 JSON 单独计数，成功事件计入相应类型 |
+| 50–54 | 汇总单文件与全局统计，返回字典 |
+| 57–65 | 解析 `--dsh-home` 参数，捕获常见文件错误 |
+| 66–70 | 打印结构统计；没有 JSONL 文件时返回非零状态 |
+| 73–74 | 仅在脚本直连运行时调用主函数 |
+
+`session_report.py` 是 **运行后** 的日志阅读器。DSH 在运行中将工具结果反馈给模型的功能，并不依赖这个 Python 统计脚本。
+
+### 14.6 其他配置文件为什么这样写？
+
+| 文件与行号 | 作用 |
+| --- | --- |
+| `docker/Dockerfile:1` | 使用 Python 3.12 Slim Bookworm 镜像 |
+| `docker/Dockerfile:2–8` | 安装可选锁定版本的 SDK，执行 `pip check`；不做真实模型连通性检查 |
+| `docker/Dockerfile:9–13` | 设置 Python 环境、工作目录、默认用户和帮助命令 |
+| `config/disable-session-upload.patch.yml:1–5` | 将 `session-log-deepseek` 插件设置为 `enabled: false`；正常模型请求并未被禁止 |
+| `tests/test_phase0.py:1–40` | 用构造的 JSONL 检查日志解析和隐藏假敏感字段 |
+| `tests/test_phase0.py:41–129` | 用 `FakeHarness` 测试 Python 参数和输出，**不调用真实模型或 Bash** |
+| `.github/workflows/phase0-offline.yml:1–20` | 代码变更或手动触发离线工作流；docs 改动不在自动触发路径 |
+| `.github/workflows/phase0-offline.yml:22–38` | 执行 Bash/Python 语法检查与单元测试，没有真实 Docker 或 API 运行 |
+
+**怎样使用这份解读？** 看完一个参数或函数，就点击对应源码检查实际行号。后续项目代码更新时优先修改本仓库的解释；如果要研究“为什么需要 Agent Loop、Plan Mode、State 或权限审批”，再跳转 [HarnessLab 原理文章](https://github.com/leecolin2023/HarnessLab/blob/main/agent-runtime/README.md)。两边互相链接，但不复制一份通用理论。
+
 ## 代码依据与延伸阅读
 
 - [job-agent 的本次代码基准提交](https://github.com/leecolin2023/job-agent/tree/70326a48b85ef813642f8e5298f44465fa98166e)
